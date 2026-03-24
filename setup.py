@@ -97,6 +97,12 @@ def process(media_path, force=False):
     if place_file(tvshow_src, tvshow_dst, force):
         print("✓ tvshow.nfo placed at series root")
 
+    # Place main poster at series root
+    poster_src = METADATA_DIR / "poster.png"
+    poster_dst = series_dir / "poster.png"
+    if place_file(poster_src, poster_dst, force):
+        print("✓ main poster placed at series root")
+
     placed = 0
     skipped = 0
     unmatched = []
