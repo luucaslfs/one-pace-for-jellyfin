@@ -19,14 +19,18 @@ Metadata is sourced from [one-pace-for-plex](https://github.com/SpykerNZ/one-pac
 ## Requirements
 
 - Python 3.7+
-- One Pace video files using the **original filenames** from the One Pace project
+- One Pace video files using either the **original filenames** from the One Pace project
+  or a season/episode format with the episode title in brackets
   e.g. `[One Pace][218-220] Jaya 01 [1080p][2BBCD106].mkv`
+  or `[One Pace] S01E03 [The Pirate King and the Master Swordsman].mkv`
+  legacy variants like `[One Pace][1023-1024] Onigashima 34 - So-and-So.mp4`
+  are also supported when they can be resolved from the arc, title, or chapter number
 
 ---
 
 ## Folder Structure
 
-Your Jellyfin library should point to a folder containing a single **`One Pace`** series folder, using the standard One Pace naming format:
+Your Jellyfin library should point to a folder containing a single **`One Pace`** series folder. Arc folders can use the standard One Pace naming format or season-style names such as `Season 1`, `Season 2`, and `Specials`:
 
 ```
 /media/Anime/                                        ← Jellyfin library root
@@ -93,6 +97,39 @@ Then trigger a library scan: **Dashboard → Libraries → Scan All Libraries**.
 
 ---
 
+## Detection Logic
+
+### Season folder detection
+
+Arc folders are matched in this order:
+
+- Standard One Pace folder names, such as `[One Pace][218-236] Jaya [1080p]`
+- Dash-separated names, such as `Arco 13 - Jaya`
+- Exact season names from `metadata/seasons.json`, such as `Specials`
+- Season-number folders, such as `Season 1`, `Season 2`, and so on
+
+### Episode filename detection
+
+Episode files are matched in this order:
+
+- Original One Pace filenames, such as `[One Pace][218-220] Jaya 01 [1080p][2BBCD106].mkv`
+- Season/episode filenames with a bracketed title, such as `[One Pace] S01E03 [The Pirate King and the Master Swordsman].mkv`
+- Legacy original-style filenames with a trailing title, such as `[One Pace][1023-1024] Onigashima 34 - So-and-So.mp4`
+
+When a filename can be interpreted more than one way, the script keeps the existing direct match logic first and then falls back in this order:
+
+- Match by the season/episode number already implied by the current folder
+- Match by normalized episode title
+- Match by chapter number from the original filename when local metadata uses chapter-based numbering
+
+For legacy Wano-era filenames, arc aliases such as `Onigashima` and `End of Wano` are resolved through `Wano` so they can still map into the existing metadata set.
+
+### Known limitation
+
+If the repository does not contain metadata for a season or episode, the script will still report the file as unmatched even when the naming format is supported. Current examples include missing `metadata/seasons/0/` data for `Specials` and missing local NFOs for some later Skypiea and Wano-era entries.
+
+---
+
 ## Re-running after new downloads
 
 Just run the script again — it skips files that already have NFOs:
@@ -111,7 +148,7 @@ Use `--force` only if you want to refresh metadata from scratch.
 The script couldn't find the arc name in the folder name. Make sure the folder name contains the arc name (e.g. "Jaya", "Skypiea"). Open an issue if the arc name format is unexpected.
 
 **Episode not matched:**
-The video filename doesn't follow the standard One Pace naming format. The script expects filenames like `[One Pace][chapters] Arc Name EE [res][CRC].ext`.
+The video filename doesn't follow a supported One Pace naming format. The script expects filenames like `[One Pace][chapters] Arc Name EE [res][CRC].ext`, legacy variants like `[One Pace][chapters] Arc Name EE - Episode Title.ext`, or `[One Pace] S01E03 [Episode Title].ext`.
 
 **Jellyfin still shows wrong metadata:**
 Right-click the series → **Refresh Metadata** → check **Replace all metadata** and **Replace all images**.

@@ -17,6 +17,7 @@ import re
 import json
 import shutil
 import argparse
+import unicodedata
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
@@ -24,16 +25,28 @@ METADATA_DIR = SCRIPT_DIR / "metadata"
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi", ".m4v"}
 
-# Matches standard One Pace filenames:
+# Matches standard and legacy One Pace filenames:
 #   [One Pace][218-220] Jaya 01 [1080p][2BBCD106].mkv
 #   [One Pace][302-303] Skypiea 25 Alternate (G-8) [1080p][90C45C25].mkv
 #   [One Pace][303] Long Ring Long Land 00 [1080p][En Sub][7582DAC2].mp4
-FILENAME_PATTERN = re.compile(
-    r"^\[One Pace\]\[[^\]]+\]\s+(.+?)\s+(\d+)"
+ORIGINAL_FILENAME_PATTERN = re.compile(
+    r"^\[One Pace\]\[([^\]]+)\]\s+(.+?)\s+(\d+)"
     r"(\s+Alternate[^\[]*?)?"
-    r"\s+\[",
+    r"(?:\s+-\s+(.+?))?"
+    r"(?:\s+\[|$)",
     re.IGNORECASE,
 )
+SEASON_EPISODE_TITLE_PATTERN = re.compile(
+    r"^\[One Pace\]\s+S(\d+)E(\d+)\s+\[(.+?)\]",
+    re.IGNORECASE,
+)
+TITLE_PATTERN = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+CHAPTER_NUMBER_PATTERN = re.compile(r"(\d+)")
+
+ARC_ALIASES = {
+    "onigashima": "Wano",
+    "end of wano": "Wano",
+}
 
 
 def load_seasons():
@@ -58,6 +71,10 @@ def normalize(name):
 
 def find_season_number(arc_name, seasons):
     """Match arc name from filename to season number, with fuzzy fallback."""
+    alias_name = ARC_ALIASES.get(arc_name.lower())
+    if alias_name:
+        arc_name = alias_name
+
     if arc_name in seasons:
         return seasons[arc_name]
     arc_lower = arc_name.lower()
@@ -74,6 +91,127 @@ def find_season_number(arc_name, seasons):
         if arc_lower in k.lower() or k.lower() in arc_lower:
             return v
     return None
+
+
+def resolve_season_from_folder(folder_name, seasons):
+    """Resolve a season number and canonical arc name from a folder name."""
+    arc_match = re.search(r"\]\s+(.+?)(?:\s+\[|$)", folder_name)
+    if not arc_match:
+        arc_match = re.search(r"[-–]\s*(.+)$", folder_name)
+
+    if arc_match:
+        arc_name = arc_match.group(1).strip()
+        season_num = find_season_number(arc_name, seasons)
+        return season_num, arc_name
+
+    season_num = find_season_number(folder_name, seasons)
+    if season_num is not None:
+        return season_num, folder_name.strip()
+
+    season_match = re.fullmatch(r"season\s+(\d+)", folder_name.strip(), re.IGNORECASE)
+    if not season_match:
+        return None, None
+
+    season_num = int(season_match.group(1))
+    for arc_name, num in seasons.items():
+        if num == season_num:
+            return season_num, arc_name
+
+    return None, None
+
+
+def normalize_title(title):
+    """Normalize an episode title for matching."""
+    normalized = unicodedata.normalize("NFKD", title)
+    normalized = normalized.encode("ascii", "ignore").decode("ascii")
+    normalized = normalized.lower().replace("&", "and")
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def extract_nfo_title(nfo_path):
+    """Read an episode title from an NFO file."""
+    match = TITLE_PATTERN.search(nfo_path.read_text(encoding="utf-8"))
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def build_episode_nfo_path(season_meta, episode_number, is_alternate=False):
+    suffix = "_alternate" if is_alternate else ""
+    return season_meta / f"S{int(season_meta.name):02d}E{episode_number:02d}{suffix}.nfo"
+
+
+def find_nfo_by_title(season_meta, title):
+    normalized_title = normalize_title(title)
+    for nfo_path in sorted(season_meta.glob("S*.nfo")):
+        nfo_title = extract_nfo_title(nfo_path)
+        if nfo_title and normalize_title(nfo_title) == normalized_title:
+            return nfo_path
+    return None
+
+
+def parse_chapter_number(chapter_token):
+    match = CHAPTER_NUMBER_PATTERN.search(chapter_token)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def resolve_episode_nfo(video_name, season_meta, seasons):
+    """Resolve the source NFO file for a video filename within a season."""
+    match = ORIGINAL_FILENAME_PATTERN.match(video_name)
+    if match:
+        chapter_token = match.group(1)
+        arc_name = match.group(2).strip()
+        ep_num = int(match.group(3))
+        is_alternate = bool(match.group(4))
+        title = match.group(5).strip() if match.group(5) else None
+        if title:
+            title = re.sub(r"\.[^.]+$", "", title)
+        chapter_num = parse_chapter_number(chapter_token)
+
+        candidate_seasons = [season_meta]
+        arc_season_num = find_season_number(arc_name, seasons)
+        if arc_season_num is not None:
+            arc_season_meta = METADATA_DIR / "seasons" / str(arc_season_num)
+            if arc_season_meta.is_dir() and arc_season_meta != season_meta:
+                candidate_seasons.append(arc_season_meta)
+
+        numbered_nfo = build_episode_nfo_path(season_meta, ep_num, is_alternate)
+        if numbered_nfo.exists():
+            if not title:
+                return numbered_nfo
+            nfo_title = extract_nfo_title(numbered_nfo)
+            if nfo_title and normalize_title(nfo_title) == normalize_title(title):
+                return numbered_nfo
+
+        if title:
+            for candidate in candidate_seasons:
+                title_nfo = find_nfo_by_title(candidate, title)
+                if title_nfo is not None:
+                    return title_nfo
+
+        if chapter_num is not None:
+            for candidate in candidate_seasons:
+                chapter_nfo = build_episode_nfo_path(candidate, chapter_num)
+                if chapter_nfo.exists():
+                    return chapter_nfo
+
+        return None
+
+    match = SEASON_EPISODE_TITLE_PATTERN.match(video_name)
+    if not match:
+        return None
+
+    ep_num = int(match.group(2))
+    title = normalize_title(match.group(3))
+
+    numbered_nfo = build_episode_nfo_path(season_meta, ep_num)
+    if numbered_nfo.exists():
+        return numbered_nfo
+
+    return find_nfo_by_title(season_meta, match.group(3))
 
 
 def place_file(src, dst, force):
@@ -105,20 +243,8 @@ def process(media_path, force=False):
         if not arc_dir.is_dir():
             continue
 
-        # Extract arc name from folder — supports both formats:
-        #   [One Pace][218-236] Jaya [1080p]   (plugin format)
-        #   Arco 13 - Jaya                      (custom format)
-        arc_match = re.search(r"\]\s+(.+?)(?:\s+\[|$)", arc_dir.name)
-        if not arc_match:
-            arc_match = re.search(r"[-–]\s*(.+)$", arc_dir.name)
-        if not arc_match:
-            continue
-
-        arc_name = arc_match.group(1).strip()
-        season_num = find_season_number(arc_name, seasons)
-
+        season_num, arc_name = resolve_season_from_folder(arc_dir.name, seasons)
         if season_num is None:
-            print(f"\n⚠  Could not match arc: '{arc_name}' (folder: {arc_dir.name})")
             continue
 
         season_meta = METADATA_DIR / "seasons" / str(season_num)
@@ -141,24 +267,11 @@ def process(media_path, force=False):
             if video.suffix.lower() not in VIDEO_EXTENSIONS:
                 continue
 
-            m = FILENAME_PATTERN.match(video.name)
-            if not m:
-                unmatched.append(str(video))
-                continue
-
-            ep_num = int(m.group(2))
-            is_alternate = bool(m.group(3))
-
-            if is_alternate:
-                nfo_name = f"S{season_num:02d}E{ep_num:02d}_alternate.nfo"
-            else:
-                nfo_name = f"S{season_num:02d}E{ep_num:02d}.nfo"
-
-            nfo_src = season_meta / nfo_name
+            nfo_src = resolve_episode_nfo(video.name, season_meta, seasons)
             nfo_dst = video.with_suffix(".nfo")
 
-            if not nfo_src.exists():
-                print(f"   ✗ No NFO found for ep {ep_num:02d} {'(alternate) ' if is_alternate else ''}— {video.name}")
+            if nfo_src is None:
+                print(f"   ✗ No matching NFO found — {video.name}")
                 unmatched.append(str(video))
                 continue
 
