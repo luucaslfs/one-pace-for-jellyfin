@@ -76,6 +76,26 @@ def find_season_number(arc_name, seasons):
     return None
 
 
+def place_nfo(src, dst, force):
+    """Copy an NFO file, injecting <lockdata>true</lockdata> if absent.
+
+    Without lockdata=true, Jellyfin's NFO metadata saver overwrites placed files
+    during a library refresh. It derives season numbers from folder names, so a
+    folder like '[One Pace][909-924] Wano Act 1' becomes season 909924 instead
+    of the correct arc number.
+    """
+    if dst.exists() and not force:
+        return False
+    content = src.read_text(encoding="utf-8")
+    if "<lockdata>" not in content:
+        for tag in ("<season>", "<episodedetails>", "<tvshow>"):
+            if tag in content:
+                content = content.replace(tag, tag + "\n  <lockdata>true</lockdata>", 1)
+                break
+    dst.write_text(content, encoding="utf-8")
+    return True
+
+
 def place_file(src, dst, force):
     if dst.exists() and not force:
         return False
@@ -94,7 +114,7 @@ def process(media_path, force=False):
     # Place tvshow.nfo at series root
     tvshow_src = METADATA_DIR / "tvshow.nfo"
     tvshow_dst = series_dir / "tvshow.nfo"
-    if place_file(tvshow_src, tvshow_dst, force):
+    if place_nfo(tvshow_src, tvshow_dst, force):
         print("✓ tvshow.nfo placed at series root")
 
     placed = 0
@@ -129,7 +149,7 @@ def process(media_path, force=False):
         print(f"\n📁 {arc_dir.name}  →  Season {season_num} ({arc_name})")
 
         # Place season.nfo
-        if place_file(season_meta / "season.nfo", arc_dir / "season.nfo", force):
+        if place_nfo(season_meta / "season.nfo", arc_dir / "season.nfo", force):
             print("   ✓ season.nfo")
 
         # Place poster
@@ -162,7 +182,7 @@ def process(media_path, force=False):
                 unmatched.append(str(video))
                 continue
 
-            if place_file(nfo_src, nfo_dst, force):
+            if place_nfo(nfo_src, nfo_dst, force):
                 print(f"   ✓ {video.name}")
                 placed += 1
             else:
