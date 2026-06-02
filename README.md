@@ -73,8 +73,9 @@ python setup.py "/path/to/your/One Pace" --force
 In Jellyfin, go to **Dashboard → Libraries → [your library] → Edit**:
 
 - **Content type:** `Shows`
-- Under **Metadata readers**, ensure `NFO` is enabled and at the top
-- **Metadata savers:** enable `NFO`
+- **Metadata downloaders**: disable `all`
+- **Image fetchers**: disable `all` (except **Episode fetchers** if you want those, e.g. `Screen Grabber`)
+- **Metadata savers:** disable `NFO`
 
 Then trigger a library scan: **Dashboard → Libraries → Scan All Libraries**.
 
