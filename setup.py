@@ -30,6 +30,7 @@ VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi", ".m4v"}
 #   [One Pace][303] Long Ring Long Land 00 [1080p][En Sub][7582DAC2].mp4
 FILENAME_PATTERN = re.compile(
     r"^\[One Pace\]\[[^\]]+\]\s+(.+?)\s+(\d+)"
+    r"(\s+Extended[^\[]*?)?"
     r"(\s+Alternate[^\[]*?)?"
     r"\s+\[",
     re.IGNORECASE,
@@ -147,7 +148,8 @@ def process(media_path, force=False):
                 continue
 
             ep_num = int(m.group(2))
-            is_alternate = bool(m.group(3))
+            is_extended = bool(m.group(3))
+            is_alternate = bool(m.group(4))
 
             if is_alternate:
                 nfo_name = f"S{season_num:02d}E{ep_num:02d}_alternate.nfo"
